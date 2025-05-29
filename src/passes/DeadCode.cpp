@@ -40,6 +40,9 @@ void DeadCode::mark(Function *func) {
     marked.clear();
     // TODO: 标记无用变量
     throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
+    for (auto &bb : func->get_basic_blocks()){
+        for (auto &ins :bb->get_)
+    }
 }
 
 void DeadCode::mark(Instruction *ins) {
