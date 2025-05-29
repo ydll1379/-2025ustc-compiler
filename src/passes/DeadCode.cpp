@@ -41,7 +41,11 @@ void DeadCode::mark(Function *func) {
     // TODO: 标记无用变量
     throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
     for (auto &bb : func->get_basic_blocks()){
-        for (auto &ins :bb->get_)
+        for (auto &ins :bb->get_instructions()) {
+            if (is_critical(ins)) {
+                mark(ins);
+            }
+        }
     }
 }
 
@@ -80,6 +84,9 @@ bool DeadCode::is_critical(Instruction *ins) {
     // 3. 如果是无用的返回指令，则无用
     // 4. 如果是无用的存储指令，则无用
     throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
+    if(ins->is_call()) {
+        
+    }
     return false;
 }
 
