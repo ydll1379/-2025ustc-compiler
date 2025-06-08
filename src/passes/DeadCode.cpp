@@ -39,14 +39,22 @@ void DeadCode::mark(Function *func) {
     work_list.clear();
     marked.clear();
     // TODO: 标记无用变量
-    throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
+    // throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
     for (auto &bb : func->get_basic_blocks()){
-        for (auto &ins :bb->get_instructions()) {
-            if (is_critical(ins)) {
-                mark(ins);
+        for (auto &ins :bb.get_instructions()) {
+            if (is_critical(&ins)) {
+                marked[&ins] = true;
+                work_list.push_back(&ins);
             }
         }
     }
+
+    while (!work_list.empty()) {
+        auto ins = work_list.back();
+        work_list.pop_back();
+        mark(ins);
+    }
+
 }
 
 void DeadCode::mark(Instruction *ins) {
@@ -72,7 +80,26 @@ bool DeadCode::sweep(Function *func) {
     // 4. 注意：删除指令时，需要先删除操作数的引用，然后再删除指令本身
     // 5. 删除指令时，需要注意指令的顺序，不能删除正在遍历的指令
     std::unordered_set<Instruction *> wait_del{};
-    throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
+    // throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
+    for(auto &bb: func->get_basic_blocks()){
+        for(auto &ins: bb.get_instructions()){
+            Instruction* inst = &ins;
+            if (!marked[inst]) {
+                wait_del.insert(inst);
+            }
+        }
+    }
+
+    for (auto inst : wait_del)
+        inst->remove_all_operands();
+    for (auto inst : wait_del) {
+        // 从所在 BB 中移除
+        auto bb = inst->get_parent();
+        bb->get_instructions().erase(inst);
+
+        delete inst;
+        ++ins_count;
+    }
     return not wait_del.empty(); // changed
 }
 
@@ -83,10 +110,20 @@ bool DeadCode::is_critical(Instruction *ins) {
     // 2. 如果是无用的分支指令，则无用
     // 3. 如果是无用的返回指令，则无用
     // 4. 如果是无用的存储指令，则无用
-    throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
+    // throw std::runtime_error("Lab2: 你有一个TODO需要完成！");
     if(ins->is_call()) {
-        
+        auto func = ins->get_function();
+        if (func_info->is_pure_function(func)) {
+            return false;
+        }
+        return true;
     }
+    if (ins->is_br() || ins->is_ret() || ins->is_store()) {
+        return true;
+    }
+    // if (ins->is_alloca() || ins->is_load()) {
+    //     return false; // alloc/load are not dead code
+    // }
     return false;
 }
 

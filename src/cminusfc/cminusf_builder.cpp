@@ -1,4 +1,9 @@
 #include "cminusf_builder.hpp"
+#include "Constant.hpp"
+#include "GlobalVariable.hpp"
+#include "Type.hpp"
+#include "Value.hpp"
+#include <system_error>
 
 #define CONST_FP(num) ConstantFP::get((float)num, module.get())
 #define CONST_INT(num) ConstantInt::get(num, module.get())
@@ -60,6 +65,44 @@ Value* CminusfBuilder::visit(ASTNum &node) {
 Value* CminusfBuilder::visit(ASTVarDeclaration &node) {
     // TODO: This function is empty now.
     // Add some code here.
+    Type *var_type;
+    if (node.type == TYPE_INT) {
+        var_type = INT32_T;
+    } else if (node.type == TYPE_FLOAT) {
+        var_type = FLOAT_T;
+    }
+
+    if(scope.in_global())//全局
+    {
+        if(node.num==nullptr)//不是数组
+        {
+            auto initial=ConstantZero::get(var_type, module.get());
+            auto global_alloc=GlobalVariable::create(node.id,module.get(),var_type,false,initial);
+            scope.push(node.id,global_alloc);
+        }
+        else//是数组
+        {
+            auto *arrayType=ArrayType::get(var_type,node.num->i_val);
+            auto initial=ConstantZero::get(arrayType, module.get());
+            auto global_alloc=GlobalVariable::create(node.id,module.get(),arrayType,false,initial);
+            scope.push(node.id,global_alloc);
+        }
+    }
+    else//非全局
+    {
+        if(node.num==nullptr)//不是数组
+        {
+            auto alloc=builder->create_alloca(var_type);
+            scope.push(node.id,alloc);
+        }
+        else//数组
+        {
+            auto *arrayType=ArrayType::get(var_type,node.num->i_val);
+            auto alloc=builder->create_alloca(arrayType);
+            scope.push(node.id,alloc);
+        }
+    }
+
     return nullptr;
 }
 
@@ -104,9 +147,32 @@ Value* CminusfBuilder::visit(ASTFunDeclaration &node) {
     }
     for (unsigned int i = 0; i < node.params.size(); ++i) {
         // TODO: You need to deal with params and store them in the scope.
+        Value *param_var;
+        if(node.params[i]->isarray)
+        {
+            if(node.params[i]->type==TYPE_INT)
+                param_var=builder->create_alloca(INT32PTR_T);
+            else if(node.params[i]->type==TYPE_FLOAT)
+                param_var=builder->create_alloca(FLOATPTR_T);
+            builder->create_store(args[i],param_var);
+            //param_value=builder->create_load(param_var);
+            scope.push(node.params[i]->id, param_var);
+        }
+        else
+        {
+            if(node.params[i]->type==TYPE_INT)
+                param_var=builder->create_alloca(INT32_T);
+            else if(node.params[i]->type==TYPE_FLOAT)
+                param_var=builder->create_alloca(FLOAT_T);
+            builder->create_store(args[i],param_var);
+            scope.push(node.params[i]->id, param_var);
+        }
+
     }
+    // std::cout << 1 << std::endl;
     node.compound_stmt->accept(*this);
-    if (builder->get_insert_block()->get_terminator() == nullptr) 
+    // if (builder->get_insert_block()->get_terminator() == nullptr)
+    if(!builder->get_insert_block()->is_terminated()) 
     {
         if (context.func->get_return_type()->is_void_type())
             builder->create_void_ret();
@@ -127,16 +193,20 @@ Value* CminusfBuilder::visit(ASTCompoundStmt &node) {
     // TODO: This function is not complete.
     // You may need to add some code here
     // to deal with complex statements. 
-    
+
+    scope.enter();
     for (auto &decl : node.local_declarations) {
         decl->accept(*this);
     }
 
     for (auto &stmt : node.statement_list) {
         stmt->accept(*this);
-        if (builder->get_insert_block()->get_terminator() == nullptr)
+        // if (builder->get_insert_block()->get_terminator() == nullptr)
+        //     break;
+        if (builder->get_insert_block()->is_terminated())
             break;
     }
+    scope.exit();
     return nullptr;
 }
 
@@ -177,7 +247,10 @@ Value* CminusfBuilder::visit(ASTSelectionStmt &node) {
     } else {
         builder->set_insert_point(falseBB);
         node.else_statement->accept(*this);
-        if (not builder->get_insert_block()->is_terminated()) {
+        // if (not builder->get_insert_block()->is_terminated()) {
+        //     builder->create_br(contBB);
+        // }
+        if (!builder->get_insert_block()->is_terminated()) {
             builder->create_br(contBB);
         }
     }
@@ -189,6 +262,36 @@ Value* CminusfBuilder::visit(ASTSelectionStmt &node) {
 Value* CminusfBuilder::visit(ASTIterationStmt &node) {
     // TODO: This function is empty now.
     // Add some code here.
+    // auto *ret_val = node.expression->accept(*this);
+    // auto fun = builder->get_insert_block()->get_parent();
+    static int while_cnt = 0;
+    int my_id = while_cnt++;
+
+    auto judgeBB=BasicBlock::create(module.get(),"judgeBB"+ std::to_string(my_id),context.func);
+    auto stateBB=BasicBlock::create(module.get(),"stateBB"+ std::to_string(my_id),context.func);
+    auto outBB=BasicBlock::create(module.get(),"outBB"+ std::to_string(my_id),context.func);
+//judge
+    builder->create_br(judgeBB);
+    builder->set_insert_point(judgeBB);
+    auto *ret_val = node.expression->accept(*this);
+    auto ex_tp=ret_val->get_type();
+    Value* truefalse;
+    if(ex_tp->is_integer_type())//整形
+    {
+        truefalse = builder->create_icmp_gt(ret_val, CONST_INT(0));
+    }
+    else
+    {
+        truefalse = builder->create_fcmp_gt(ret_val, CONST_FP(0));
+    }
+    builder->create_cond_br(truefalse,stateBB,outBB);
+//state
+    builder->set_insert_point(stateBB);
+    node.statement->accept(*this);
+    if(!builder->get_insert_block()->is_terminated())
+        builder->create_br(judgeBB);//不会返回
+//out
+    builder->set_insert_point(outBB);
     return nullptr;
 }
 
@@ -216,6 +319,67 @@ Value* CminusfBuilder::visit(ASTReturnStmt &node) {
 Value* CminusfBuilder::visit(ASTVar &node) {
     // TODO: This function is empty now.
     // Add some code here.
+    bool ret_val = context.require_lvalue;
+    context.require_lvalue = false;
+    if(node.expression==nullptr)
+    {
+        auto var=scope.find(node.id);
+        if(ret_val) {
+            context.require_lvalue = false;
+            return var;
+        }
+        else
+        {
+            if(var->get_type()->get_pointer_element_type()->is_integer_type()||var->get_type()->get_pointer_element_type()->is_float_type()||var->get_type()->get_pointer_element_type()->is_pointer_type())
+                return builder->create_load(var);
+            else
+                return builder->create_gep(var, {CONST_INT(0), CONST_INT(0)});
+        }
+    }
+    else
+    {
+        auto var=scope.find(node.id);
+        auto *ret_val_expr = node.expression->accept(*this);
+        Value* index;
+        // auto fun = builder->get_insert_block()->get_parent();
+        auto ex_tp=ret_val_expr->get_type();
+        // Value* ret;
+        if(ret_val_expr->get_type()->is_float_type())
+        {
+            ret_val_expr=builder->create_fptosi(ret_val_expr,INT32_T);
+        }
+        index=ret_val_expr;
+        Value* check;
+        check=builder->create_icmp_lt(index, CONST_INT(0));
+        auto curBB=BasicBlock::create(module.get(),"",context.func);
+        auto wrongBB=BasicBlock::create(module.get(),"",context.func);
+        builder->create_cond_br(check,wrongBB, curBB);
+//wrong
+        builder->set_insert_point(wrongBB);
+        auto wrong=scope.find("neg_idx_except");
+        builder->create_call(wrong,{});
+        builder->create_br(curBB);
+//correct
+        builder->set_insert_point(curBB);
+        Value* vargep;
+        auto is_int = var->get_type()->get_pointer_element_type()->is_integer_type();
+        auto is_float = var->get_type()->get_pointer_element_type()->is_float_type();
+        auto is_ptr = var->get_type()->get_pointer_element_type()->is_pointer_type();
+        if(is_int || is_float) 
+            vargep = builder->create_gep(var, {index});
+        else if(is_ptr) {
+            auto arr_load = builder->create_load(var);
+            vargep = builder->create_gep(arr_load, {index});
+        }
+        else vargep = builder->create_gep(var, {CONST_INT(0), index});
+        if(ret_val) {
+            // ret =vargep;
+            context.require_lvalue = false;
+            return vargep;
+        }
+        else
+            return builder->create_load(vargep);
+    }
     return nullptr;
 }
 
@@ -238,7 +402,72 @@ Value* CminusfBuilder::visit(ASTAssignExpression &node) {
 Value* CminusfBuilder::visit(ASTSimpleExpression &node) {
     // TODO: This function is empty now.
     // Add some code here.
-    return nullptr;
+    Value* ret_l = node.additive_expression_l->accept(*this);
+    if(node.additive_expression_r!=nullptr)//另一个不为空
+    {
+        Value* ret_r;
+        ret_r = node.additive_expression_r->accept(*this);
+        Value* ret;
+        if((ret_l->get_type()->is_integer_type())&&(ret_r->get_type()->is_integer_type())){
+            switch (node.op) {
+                case OP_LE:
+                    ret = builder->create_icmp_le(ret_l, ret_r);
+                    break;
+                case OP_LT:
+                    ret = builder->create_icmp_lt(ret_l, ret_r);
+                    break;
+                case OP_GT:
+                    ret = builder->create_icmp_gt(ret_l, ret_r);
+                    break;
+                case OP_GE:
+                    ret = builder->create_icmp_ge(ret_l, ret_r);
+                    break;
+                case OP_EQ:
+                    ret = builder->create_icmp_eq(ret_l, ret_r);
+                    break;
+                case OP_NEQ:
+                    ret = builder->create_icmp_ne(ret_l, ret_r);
+                    break;
+                default: {
+                    return nullptr;
+                    break;
+                }
+            }
+        }
+        else{//至少有一个float
+            if(ret_l->get_type()->is_integer_type())
+                ret_l=builder->create_sitofp(ret_l,FLOAT_T);
+            if(ret_r->get_type()->is_integer_type())
+                ret_r=builder->create_sitofp(ret_r,FLOAT_T);
+            switch (node.op) {
+                case OP_LE:
+                    ret = builder->create_fcmp_le(ret_l, ret_r);
+                    break;
+                case OP_LT:
+                    ret = builder->create_fcmp_lt(ret_l, ret_r);
+                    break;
+                case OP_GT:
+                    ret = builder->create_fcmp_gt(ret_l, ret_r);
+                    break;
+                case OP_GE:
+                    ret = builder->create_fcmp_ge(ret_l, ret_r);
+                    break;
+                case OP_EQ:
+                    ret = builder->create_fcmp_eq(ret_l, ret_r);
+                    break;
+                case OP_NEQ:
+                    ret = builder->create_fcmp_ne(ret_l, ret_r);
+                    break;
+                default: {
+                    return nullptr;
+                    break;
+                }
+            }
+        }
+        return builder->create_zext(ret,INT32_T);
+    }
+    else
+        return ret_l;
 }
 
 Value* CminusfBuilder::visit(ASTAdditiveExpression &node) {
