@@ -1,6 +1,7 @@
 #include "Module.hpp"
 #include "ast.hpp"
 #include "cminusf_builder.hpp"
+#include "lightir/Pass.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -17,6 +18,8 @@ struct Config {
 
     bool emitast{false};
     bool emitllvm{false};
+    bool mem2reg{false};
+    bool dce{false};
 
     Config(int argc, char **argv) : argc(argc), argv(argv) {
         parse_cmd_line();
@@ -57,7 +60,12 @@ int main(int argc, char **argv) {
             output_stream << m->print();
         }
 
-        // TODO: lab3 lab4 (IR optimization or codegen)
+        // Apply optimizations if requested
+        if (config.dce) {
+            DeadCodeElimination dce_pass;
+            dce_pass.run(m.get());
+        }
+        // TODO: lab3 lab4 (IR optimization or codegen) - mem2reg and other passes
     }
 
     return 0;
@@ -79,6 +87,10 @@ void Config::parse_cmd_line() {
             emitast = true;
         } else if (argv[i] == "-emit-llvm"s) {
             emitllvm = true;
+        } else if (argv[i] == "-mem2reg"s) {
+            mem2reg = true;
+        } else if (argv[i] == "-dce"s) {
+            dce = true;
         } else {
             if (input_file.empty()) {
                 input_file = argv[i];
@@ -105,7 +117,7 @@ void Config::check() {
 
 void Config::print_help() const {
     std::cout << "Usage: " << exe_name
-              << " [-h|--help] [-o <target-file>] [-mem2reg] [-emit-llvm] [-S] "
+              << " [-h|--help] [-o <target-file>] [-mem2reg] [-dce] [-emit-llvm] [-S] "
                  "<input-file>"
               << std::endl;
     exit(0);

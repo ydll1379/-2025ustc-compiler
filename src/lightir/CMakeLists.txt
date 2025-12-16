@@ -10,6 +10,7 @@ add_library(
     Instruction.cpp
     Module.cpp
     IRprinter.cpp
+    Pass.cpp
 )
 
 target_link_libraries(

@@ -111,7 +111,7 @@ suite = [
 
 def eval():
     f = open("eval_result", 'w')
-    EXE_PATH = "../../../build/cminusfc"
+    EXE_PATH = "/home/user/-2025ustc-compiler/build/cminusfc"
     TEST_BASE_PATH = "./testcases/"
     ANSWER_BASE_PATH = "./answers/"
     total_points = 0
@@ -139,8 +139,13 @@ def eval():
                 continue
 
             if result.returncode == 0:
-                subprocess.run(["clang", "-O0", "-w", "-no-pie", TEST_PATH +
-                               ".ll", "-o", TEST_PATH, "-L", "../../../build", "-lcminus_io"])
+                try:
+                    subprocess.run(["clang-15", "-O0", "-w", "-no-pie", "-fno-stack-protector", TEST_PATH +
+                                   ".ll", "-o", TEST_PATH, "-L", "/home/user/-2025ustc-compiler/build", "-lcminus_io"], check=True, stderr=subprocess.PIPE)
+                except subprocess.CalledProcessError as e:
+                    f.write('\tFail\n')
+                    has_bonus = False
+                    continue
                 input_option = None
                 if need_input:
                     with open(ANSWER_PATH + ".in", "rb") as fin:
